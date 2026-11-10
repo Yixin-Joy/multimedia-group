@@ -1,0 +1,11 @@
+node-red-data/*
+!node-red-data/flows.json
+mongo-init
+exports
+*.pdf
+*.docx
+.chrome-*
+.edge-*
+.git
+
+

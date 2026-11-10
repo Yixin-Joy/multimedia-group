@@ -1,0 +1,19 @@
+# Local runtime data and database dumps.
+exports/
+node-red-data/*
+!node-red-data/flows.json
+
+# Docker/runtime files.
+*.log
+.DS_Store
+Thumbs.db
+
+# Local environment files.
+.env
+.env.*
+!.env.example
+
+# IDE and editor state.
+.idea/
+.vscode/
+

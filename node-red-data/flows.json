@@ -1,0 +1,546 @@
+[
+  {
+    "id": "1100000000000001",
+    "type": "tab",
+    "label": "Weather + Traffic",
+    "disabled": false,
+    "info": "Collects TD detector speed/volume/occupancy every 5 minutes and HKO hourly rainfall every 10 minutes.",
+    "env": []
+  },
+  {
+    "id": "1100000000000002",
+    "type": "inject",
+    "z": "1100000000000001",
+    "name": "Every 5 minutes",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "300",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "1100000000000003"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000003",
+    "type": "http request",
+    "z": "1100000000000001",
+    "name": "TD raw speed XML",
+    "method": "GET",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 360,
+    "y": 120,
+    "wires": [
+      [
+        "1100000000000004"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000004",
+    "type": "xml",
+    "z": "1100000000000001",
+    "name": "Parse traffic XML",
+    "prop": "payload",
+    "attr": "",
+    "out": "js",
+    "x": 580,
+    "y": 120,
+    "wires": [
+      [
+        "1100000000000005"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000005",
+    "type": "function",
+    "z": "1100000000000001",
+    "name": "Normalize lane rows",
+    "func": "// Convert rawSpeedVol-all.xml into one row per detector lane and interval.\nconst asArray = (value) => value == null ? [] : (Array.isArray(value) ? value : [value]);\nconst root = msg.payload && msg.payload.raw_speed_volume_list\n  ? msg.payload.raw_speed_volume_list\n  : msg.payload;\n\nif (!root) {\n  node.error(\"Traffic XML did not contain raw_speed_volume_list\", msg);\n  return null;\n}\n\nconst first = (value) => Array.isArray(value) ? value[0] : value;\nconst children = (container, key) =>\n  asArray(container).flatMap((item) => asArray(item && item[key]));\nconst text = (value) => String(first(value) ?? \"\").trim();\n\nconst sourceDate = text(root.date);\nconst periods = children(root.periods, \"period\");\nconst fetchedAt = new Date();\nconst operations = [];\nlet detectorIntervals = 0;\nlet invalidRows = 0;\n\nfor (const period of periods) {\n  const periodFrom = text(period.period_from);\n  const periodTo = text(period.period_to);\n  const observedAt = periodFrom\n    ? new Date(sourceDate + \"T\" + periodFrom + \"+08:00\")\n    : fetchedAt;\n  const detectors = children(period.detectors, \"detector\");\n\n  for (const detector of detectors) {\n    const detectorId = text(detector.detector_id);\n    const direction = text(detector.direction);\n    const lanes = children(detector.lanes, \"lane\");\n    if (detectorId) detectorIntervals += 1;\n\n    for (const lane of lanes) {\n      const laneId = text(lane.lane_id);\n      const speed = Number(first(lane.speed));\n      if (!detectorId || !laneId || !Number.isFinite(speed)) {\n        invalidRows += 1;\n        continue;\n      }\n\n      const valid = text(lane.valid).toUpperCase() === \"Y\";\n      const id = [\n        \"traffic\",\n        sourceDate,\n        periodFrom,\n        detectorId,\n        laneId,\n      ].join(\":\");\n\n      operations.push({\n        updateOne: {\n          filter: { _id: id },\n          update: {\n            $setOnInsert: {\n              _id: id,\n              source: \"TD rawSpeedVol-all.xml\",\n              sourceDate,\n              periodFrom,\n              periodTo,\n              observedAt,\n              fetchedAt,\n              detectorId,\n              direction,\n              laneId,\n              speedKmh: speed,\n              occupancyPct: Number.isFinite(Number(first(lane.occupancy)))\n                ? Number(first(lane.occupancy))\n                : null,\n              volume: Number.isFinite(Number(first(lane.volume)))\n                ? Number(first(lane.volume))\n                : null,\n              speedStdDev: Number.isFinite(Number(first(lane[\"s.d.\"])))\n                ? Number(first(lane[\"s.d.\"]))\n                : null,\n              valid,\n            },\n          },\n          upsert: true,\n        },\n      });\n    }\n  }\n}\n\nif (!operations.length) {\n  node.error(\"Traffic XML produced no valid lane observations\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_observations\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = {\n  sourceRows: operations.length,\n  detectorIntervals,\n  invalidRows,\n  periods: periods.length,\n};\nnode.status({\n  fill: \"green\",\n  shape: \"dot\",\n  text: operations.length + \" rows / \" + periods.length + \" periods\",\n});\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 800,
+    "y": 120,
+    "wires": [
+      [
+        "1100000000000006"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000006",
+    "type": "mongodb4",
+    "z": "1100000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "traffic_observations",
+    "operation": "bulkWrite",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Upsert traffic",
+    "x": 1030,
+    "y": 120,
+    "wires": [
+      [
+        "1100000000000007"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000007",
+    "type": "debug",
+    "z": "1100000000000001",
+    "name": "Traffic write result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload.upsertedCount",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1240,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "1100000000000008",
+    "type": "inject",
+    "z": "1100000000000001",
+    "name": "Every 10 minutes",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "600",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 260,
+    "wires": [
+      [
+        "1100000000000009"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000009",
+    "type": "http request",
+    "z": "1100000000000001",
+    "name": "HKO hourly rainfall",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "https://data.weather.gov.hk/weatherAPI/opendata/hourlyRainfall.php?lang=en",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 390,
+    "y": 260,
+    "wires": [
+      [
+        "1100000000000010"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000010",
+    "type": "function",
+    "z": "1100000000000001",
+    "name": "Normalize rainfall",
+    "func": "// Normalize HKO hourly rainfall to one observation per station and hour.\nlet raw = msg.payload;\nif (typeof raw === \"string\") {\n  raw = JSON.parse(raw.replace(/^\\uFEFF/, \"\"));\n}\nif (!raw || !Array.isArray(raw.hourlyRainfall)) {\n  node.error(\"HKO response did not contain hourlyRainfall\", msg);\n  return null;\n}\n\nconst fetchedAt = new Date();\nconst obsTime = raw.obsTime ? new Date(raw.obsTime) : fetchedAt;\nconst operations = [];\nlet missing = 0;\nlet trace = 0;\n\nfor (const station of raw.hourlyRainfall) {\n  const stationId = String(station.automaticWeatherStationID || \"\").trim();\n  if (!stationId) continue;\n\n  const rawValue = String(station.value ?? \"\").trim().toUpperCase();\n  let rainfallMm = null;\n  let qualityFlag = \"ok\";\n  if (rawValue === \"M\") {\n    missing += 1;\n    qualityFlag = \"missing\";\n  } else if (rawValue === \"T\") {\n    trace += 1;\n    rainfallMm = 0;\n    qualityFlag = \"trace\";\n  } else if (rawValue !== \"\" && Number.isFinite(Number(rawValue))) {\n    rainfallMm = Number(rawValue);\n  } else {\n    missing += 1;\n    qualityFlag = \"missing\";\n  }\n\n  const id = \"rainfall:\" + obsTime.toISOString() + \":\" + stationId;\n  operations.push({\n    updateOne: {\n      filter: { _id: id },\n      update: {\n        $setOnInsert: {\n          _id: id,\n          source: \"HKO hourlyRainfall API\",\n          stationId,\n          stationName: String(station.automaticWeatherStation || \"\").trim(),\n          obsTime,\n          fetchedAt,\n          rainfallValueRaw: station.value,\n          rainfallMm,\n          unit: station.unit || \"mm\",\n          qualityFlag,\n          isRaining: rainfallMm != null && rainfallMm > 0,\n        },\n      },\n      upsert: true,\n    },\n  });\n}\n\nif (!operations.length) {\n  node.error(\"HKO response produced no station observations\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"rainfall_observations\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = { sourceRows: operations.length, missing, trace };\nnode.status({ fill: \"green\", shape: \"dot\", text: operations.length + \" stations\" });\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 610,
+    "y": 260,
+    "wires": [
+      [
+        "1100000000000011"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000011",
+    "type": "mongodb4",
+    "z": "1100000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "rainfall_observations",
+    "operation": "bulkWrite",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Upsert rainfall",
+    "x": 830,
+    "y": 260,
+    "wires": [
+      [
+        "1100000000000012"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000012",
+    "type": "debug",
+    "z": "1100000000000001",
+    "name": "Weather write result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload.upsertedCount",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1040,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "1100000000000013",
+    "type": "inject",
+    "z": "1100000000000001",
+    "name": "Catalog every hour",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "3600",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "10",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 400,
+    "wires": [
+      [
+        "1100000000000014"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000014",
+    "type": "http request",
+    "z": "1100000000000001",
+    "name": "TD detector location CSV",
+    "method": "GET",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "https://static.data.gov.hk/td/traffic-data-strategic-major-roads/info/traffic_speed_volume_occ_info.csv",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 390,
+    "y": 400,
+    "wires": [
+      [
+        "1100000000000015"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000015",
+    "type": "function",
+    "z": "1100000000000001",
+    "name": "Parse detector catalog",
+    "func": "// Parse the TD detector location CSV and key each row by AID_ID_Number.\nfunction parseCsv(text) {\n  const source = String(text || \"\").replace(/^\\uFEFF/, \"\");\n  const rows = [];\n  let row = [];\n  let field = \"\";\n  let quoted = false;\n\n  for (let i = 0; i < source.length; i += 1) {\n    const ch = source[i];\n    if (ch === '\"') {\n      if (quoted && source[i + 1] === '\"') {\n        field += '\"';\n        i += 1;\n      } else {\n        quoted = !quoted;\n      }\n    } else if (ch === \",\" && !quoted) {\n      row.push(field);\n      field = \"\";\n    } else if ((ch === \"\\n\" || ch === \"\\r\") && !quoted) {\n      if (ch === \"\\r\" && source[i + 1] === \"\\n\") i += 1;\n      row.push(field);\n      if (row.some((value) => value !== \"\")) rows.push(row);\n      row = [];\n      field = \"\";\n    } else {\n      field += ch;\n    }\n  }\n  if (field !== \"\" || row.length) {\n    row.push(field);\n    rows.push(row);\n  }\n  if (!rows.length) return [];\n\n  const headers = rows.shift().map((value) => value.trim());\n  return rows.map((values) =>\n    Object.fromEntries(headers.map((header, index) => [header, values[index] ?? \"\"])),\n  );\n}\n\nconst records = parseCsv(msg.payload);\nif (!records.length) {\n  node.error(\"Traffic detector catalog CSV produced no records\", msg);\n  return null;\n}\n\nconst fetchedAt = new Date();\nconst operations = records\n  .map((record) => {\n    const detectorId = String(record.AID_ID_Number || \"\").trim();\n    if (!detectorId) return null;\n    return {\n      updateOne: {\n        filter: { _id: detectorId },\n        update: {\n          $set: {\n            detectorId,\n            district: record.District || \"\",\n            roadEn: record.Road_EN || \"\",\n            roadTc: record.Road_TC || \"\",\n            roadSc: record.Road_SC || \"\",\n            easting: Number(record.Easting) || null,\n            northing: Number(record.Northing) || null,\n            latitude: Number.isFinite(Number(record.Latitude))\n              ? Number(record.Latitude)\n              : null,\n            longitude: Number.isFinite(Number(record.Longitude))\n              ? Number(record.Longitude)\n              : null,\n            direction: record.Direction || \"\",\n            rotation: Number(record.Rotation) || null,\n            source: \"TD traffic_speed_volume_occ_info.csv\",\n            catalogFetchedAt: fetchedAt,\n          },\n        },\n        upsert: true,\n      },\n    };\n  })\n  .filter(Boolean);\n\nif (!operations.length) {\n  node.error(\"Traffic detector catalog produced no documents\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_detector_catalog\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = { sourceRows: operations.length };\nnode.status({ fill: \"green\", shape: \"dot\", text: operations.length + \" detectors\" });\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 620,
+    "y": 400,
+    "wires": [
+      [
+        "1100000000000016"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000016",
+    "type": "mongodb4",
+    "z": "1100000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "traffic_detector_catalog",
+    "operation": "bulkWrite",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Upsert detector catalog",
+    "x": 850,
+    "y": 400,
+    "wires": [
+      [
+        "1100000000000017"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000017",
+    "type": "debug",
+    "z": "1100000000000001",
+    "name": "Traffic catalog result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload.upsertedCount",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1080,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "1100000000000018",
+    "type": "catch",
+    "z": "1100000000000001",
+    "name": "Topic 1 errors",
+    "scope": null,
+    "uncaught": false,
+    "x": 390,
+    "y": 540,
+    "wires": [
+      [
+        "1100000000000019"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000019",
+    "type": "debug",
+    "z": "1100000000000001",
+    "name": "Traffic / weather error",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "error.message",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 620,
+    "y": 540,
+    "wires": []
+  },
+  {
+    "id": "1100000000000020",
+    "type": "catch",
+    "z": "1100000000000001",
+    "name": "Retry traffic after 30 seconds",
+    "scope": [
+      "1100000000000003"
+    ],
+    "uncaught": false,
+    "x": 140,
+    "y": 620,
+    "wires": [
+      [
+        "1100000000000021"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000021",
+    "type": "delay",
+    "z": "1100000000000001",
+    "name": "Traffic retry delay",
+    "pauseType": "delay",
+    "timeout": "30",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 360,
+    "y": 620,
+    "wires": [
+      [
+        "1100000000000003"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000022",
+    "type": "catch",
+    "z": "1100000000000001",
+    "name": "Retry weather after 30 seconds",
+    "scope": [
+      "1100000000000009"
+    ],
+    "uncaught": false,
+    "x": 140,
+    "y": 680,
+    "wires": [
+      [
+        "1100000000000023"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000023",
+    "type": "delay",
+    "z": "1100000000000001",
+    "name": "Weather retry delay",
+    "pauseType": "delay",
+    "timeout": "30",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 360,
+    "y": 680,
+    "wires": [
+      [
+        "1100000000000009"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000024",
+    "type": "catch",
+    "z": "1100000000000001",
+    "name": "Retry traffic catalog after 30 seconds",
+    "scope": [
+      "1100000000000014"
+    ],
+    "uncaught": false,
+    "x": 140,
+    "y": 740,
+    "wires": [
+      [
+        "1100000000000025"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000025",
+    "type": "delay",
+    "z": "1100000000000001",
+    "name": "Traffic catalog retry delay",
+    "pauseType": "delay",
+    "timeout": "30",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 360,
+    "y": 740,
+    "wires": [
+      [
+        "1100000000000014"
+      ]
+    ]
+  },
+  {
+    "id": "9000000000000001",
+    "type": "mongodb4-client",
+    "name": "Local smartcity MongoDB",
+    "protocol": "mongodb",
+    "hostname": "mongo",
+    "port": "27017",
+    "dbName": "smartcity",
+    "appName": "smartcity-collector",
+    "authSource": "",
+    "authMechanism": "",
+    "tls": false,
+    "tlsCAFile": "",
+    "tlsCertificateKeyFile": "",
+    "tlsInsecure": false,
+    "connectTimeoutMS": "",
+    "socketTimeoutMS": "",
+    "minPoolSize": "",
+    "maxPoolSize": "",
+    "maxIdleTimeMS": "",
+    "uri": "",
+    "advanced": "{\"connectTimeoutMS\": 30000, \"serverSelectionTimeoutMS\": 30000}",
+    "uriTabActive": "tab-uri-simple"
+  },
+  {
+    "id": "9900000000000001",
+    "type": "global-config",
+    "env": [],
+    "modules": {
+      "node-red-contrib-mongodb4": "3.4.0"
+    }
+  }
+]

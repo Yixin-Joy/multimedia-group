@@ -1,0 +1,35 @@
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  node-red:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Hong_Kong
+      NODE_RED_ENABLE_PROJECTS: "false"
+    ports:
+      - "127.0.0.1:1880:1880"
+    volumes:
+      - node-red-state:/data
+
+volumes:
+  mongo-data:
+  node-red-state:
+
