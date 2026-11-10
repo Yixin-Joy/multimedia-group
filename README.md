@@ -11,6 +11,7 @@ This repository contains a reproducible Node-RED and MongoDB environment for con
 - Deterministic upsert keys to prevent repeated polling from creating duplicates
 - Data indexes for time-series queries
 - A complete [data dictionary](DATA_DICTIONARY.md)
+- The three-person Dashboard design and assignment plan in [TEAM_WORK_PLAN.md](TEAM_WORK_PLAN.md)
 
 ## Start
 
