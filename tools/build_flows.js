@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const trafficTab = "1100000000000001";
 const parkingTab = "2200000000000001";
+const analyticsTab = "3300000000000001";
 const mongodbClient = "9000000000000001";
 
 const functionNode = (id, tab, name, func, x, y, wires) => ({
@@ -176,10 +177,12 @@ const fetchedAt = new Date();
 const operations = [];
 let detectorIntervals = 0;
 let invalidRows = 0;
+const sourcePeriods = [];
 
 for (const period of periods) {
   const periodFrom = text(period.period_from);
   const periodTo = text(period.period_to);
+  if (periodFrom) sourcePeriods.push(periodFrom);
   const observedAt = periodFrom
     ? new Date(sourceDate + "T" + periodFrom + "+08:00")
     : fetchedAt;
@@ -257,6 +260,9 @@ msg.meta = {
   detectorIntervals,
   invalidRows,
   periods: periods.length,
+  sourceDate,
+  firstPeriod: sourcePeriods[0] || null,
+  lastPeriod: sourcePeriods[sourcePeriods.length - 1] || null,
 };
 node.status({
   fill: "green",
@@ -335,7 +341,12 @@ msg.mode = "collection";
 msg.collection = "rainfall_observations";
 msg.operation = "bulkWrite";
 msg.payload = [operations, { ordered: false }];
-msg.meta = { sourceRows: operations.length, missing, trace };
+msg.meta = {
+  sourceRows: operations.length,
+  missing,
+  trace,
+  obsTime: obsTime.toISOString(),
+};
 node.status({ fill: "green", shape: "dot", text: operations.length + " stations" });
 return msg;`;
 
@@ -633,6 +644,459 @@ msg.meta = { sourceRows: operations.length };
 node.status({ fill: "green", shape: "dot", text: operations.length + " detectors" });
 return msg;`;
 
+const trafficRunRecord = `// Persist a compact success record for each traffic poll.
+const write = msg.payload || {};
+const meta = msg.meta || {};
+const runAt = new Date();
+const runId = "trafficRun:" + runAt.toISOString();
+const document = {
+  _id: runId,
+  source: "traffic",
+  runAt,
+  sourceDate: meta.sourceDate || null,
+  firstPeriod: meta.firstPeriod || null,
+  lastPeriod: meta.lastPeriod || null,
+  periods: meta.periods || 0,
+  detectorIntervals: meta.detectorIntervals || 0,
+  attemptedRows: meta.sourceRows || 0,
+  invalidRows: meta.invalidRows || 0,
+  insertedRows: write.upsertedCount || 0,
+  duplicateRows: write.matchedCount || 0,
+  modifiedRows: write.modifiedCount || 0,
+  status: "success",
+};
+
+msg.mode = "collection";
+msg.collection = "ingestion_runs";
+msg.operation = "updateOne";
+msg.payload = [{ _id: runId }, { $setOnInsert: document }, { upsert: true }];
+return msg;`;
+
+const weatherRunRecord = `// Persist a compact success record for each weather poll.
+const write = msg.payload || {};
+const meta = msg.meta || {};
+const runAt = new Date();
+const runId = "rainfallRun:" + runAt.toISOString();
+const document = {
+  _id: runId,
+  source: "rainfall",
+  runAt,
+  obsTime: meta.obsTime ? new Date(meta.obsTime) : null,
+  attemptedRows: meta.sourceRows || 0,
+  missingRows: meta.missing || 0,
+  traceRows: meta.trace || 0,
+  insertedRows: write.upsertedCount || 0,
+  duplicateRows: write.matchedCount || 0,
+  status: "success",
+};
+
+msg.mode = "collection";
+msg.collection = "ingestion_runs";
+msg.operation = "updateOne";
+msg.payload = [{ _id: runId }, { $setOnInsert: document }, { upsert: true }];
+return msg;`;
+
+const trafficAggregateBuild = `// Build detector-level 15-minute traffic aggregates.
+const hours = Math.max(1, Number(msg.lookbackHours || msg.payload || 6));
+const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+msg.lookbackHours = hours;
+msg.since = since;
+
+const pipeline = [
+  {
+    $match: {
+      valid: true,
+      speedKmh: { $gte: 0, $lte: 200 },
+      occupancyPct: { $gte: 0, $lte: 100 },
+      observedAt: { $gte: since },
+    },
+  },
+  {
+    $set: {
+      binStart: {
+        $dateTrunc: { date: "$observedAt", unit: "minute", binSize: 15 },
+      },
+    },
+  },
+  {
+    $group: {
+      _id: { detectorId: "$detectorId", binStart: "$binStart" },
+      direction: { $max: "$direction" },
+      totalVolume: {
+        $sum: {
+          $cond: [
+            { $and: [{ $ne: ["$volume", null] }, { $gte: ["$volume", 0] }] },
+            "$volume",
+            0,
+          ],
+        },
+      },
+      weightedSpeedSum: {
+        $sum: {
+          $cond: [
+            { $and: [{ $gt: ["$volume", 0] }, { $ne: ["$speedKmh", null] }] },
+            { $multiply: ["$speedKmh", "$volume"] },
+            0,
+          ],
+        },
+      },
+      meanSpeedKmh: { $avg: "$speedKmh" },
+      avgOccupancyPct: { $avg: "$occupancyPct" },
+      laneIds: { $addToSet: "$laneId" },
+      observationCount: { $sum: 1 },
+      latestObservedAt: { $max: "$observedAt" },
+    },
+  },
+  {
+    $set: {
+      avgSpeedKmh: {
+        $cond: [
+          { $gt: ["$totalVolume", 0] },
+          { $divide: ["$weightedSpeedSum", "$totalVolume"] },
+          "$meanSpeedKmh",
+        ],
+      },
+      laneCount: { $size: "$laneIds" },
+    },
+  },
+  {
+    $lookup: {
+      from: "traffic_detector_catalog",
+      localField: "_id.detectorId",
+      foreignField: "detectorId",
+      as: "catalog",
+    },
+  },
+  { $unwind: { path: "$catalog", preserveNullAndEmptyArrays: true } },
+  {
+    $project: {
+      _id: 0,
+      detectorId: "$_id.detectorId",
+      binStart: "$_id.binStart",
+      direction: { $ifNull: ["$direction", ""] },
+      district: { $ifNull: ["$catalog.district", "Unknown"] },
+      roadEn: { $ifNull: ["$catalog.roadEn", ""] },
+      roadBase: {
+        $trim: {
+          input: {
+            $arrayElemAt: [
+              { $split: [{ $ifNull: ["$catalog.roadEn", ""] }, " near "] },
+              0,
+            ],
+          },
+        },
+      },
+      latitude: { $ifNull: ["$catalog.latitude", null] },
+      longitude: { $ifNull: ["$catalog.longitude", null] },
+      avgSpeedKmh: { $round: ["$avgSpeedKmh", 2] },
+      totalVolume: 1,
+      avgOccupancyPct: { $round: ["$avgOccupancyPct", 2] },
+      laneCount: 1,
+      laneIds: 1,
+      observationCount: 1,
+      latestObservedAt: 1,
+    },
+  },
+  {
+    $set: {
+      lowSpeed: { $and: [{ $lt: ["$avgSpeedKmh", 20] }, { $gt: ["$totalVolume", 0] }] },
+      speedBand: {
+        $switch: {
+          branches: [
+            { case: { $lt: ["$avgSpeedKmh", 20] }, then: "severe" },
+            { case: { $lt: ["$avgSpeedKmh", 40] }, then: "slow" },
+            { case: { $lt: ["$avgSpeedKmh", 60] }, then: "moderate" },
+          ],
+          default: "smooth",
+        },
+      },
+      _id: {
+        $concat: [
+          "traffic15:",
+          {
+            $dateToString: {
+              date: "$binStart",
+              format: "%Y-%m-%dT%H:%M:%SZ",
+              timezone: "UTC",
+            },
+          },
+          ":",
+          "$detectorId",
+        ],
+      },
+    },
+  },
+  {
+    $merge: {
+      into: "traffic_detector_15m",
+      on: "_id",
+      whenMatched: "replace",
+      whenNotMatched: "insert",
+    },
+  },
+];
+
+msg.mode = "collection";
+msg.collection = "traffic_observations";
+msg.operation = "aggregate";
+msg.payload = [pipeline, { allowDiskUse: true }];
+node.status({ fill: "blue", shape: "dot", text: "aggregate " + hours + "h" });
+return msg;`;
+
+const trafficRoadBuild = `// Build hourly road aggregates from detector 15-minute data.
+const hours = Math.max(1, Number(msg.lookbackHours || 6));
+const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+const pipeline = [
+  { $match: { binStart: { $gte: since }, roadBase: { $ne: "" } } },
+  {
+    $set: {
+      hourStart: {
+        $dateTrunc: { date: "$binStart", unit: "hour" },
+      },
+    },
+  },
+  {
+    $group: {
+      _id: {
+        hourStart: "$hourStart",
+        roadBase: "$roadBase",
+        direction: "$direction",
+      },
+      totalVolume: { $sum: "$totalVolume" },
+      weightedSpeedSum: {
+        $sum: { $multiply: ["$avgSpeedKmh", "$totalVolume"] },
+      },
+      meanSpeedKmh: { $avg: "$avgSpeedKmh" },
+      detectors: { $addToSet: "$detectorId" },
+      lowSpeedBuckets: { $sum: { $cond: ["$lowSpeed", 1, 0] } },
+      binCount: { $sum: 1 },
+    },
+  },
+  {
+    $project: {
+      _id: 0,
+      hourStart: "$_id.hourStart",
+      roadBase: "$_id.roadBase",
+      direction: "$_id.direction",
+      totalVolume: 1,
+      detectorCount: { $size: "$detectors" },
+      detectorIds: "$detectors",
+      lowSpeedBuckets: 1,
+      binCount: 1,
+      avgSpeedKmh: {
+        $round: [
+          {
+            $cond: [
+              { $gt: ["$totalVolume", 0] },
+              { $divide: ["$weightedSpeedSum", "$totalVolume"] },
+              "$meanSpeedKmh",
+            ],
+          },
+          2,
+        ],
+      },
+    },
+  },
+  {
+    $set: {
+      _id: {
+        $concat: [
+          "roadHour:",
+          {
+            $dateToString: {
+              date: "$hourStart",
+              format: "%Y-%m-%dT%H:00:00Z",
+              timezone: "UTC",
+            },
+          },
+          ":",
+          "$roadBase",
+          ":",
+          "$direction",
+        ],
+      },
+    },
+  },
+  {
+    $merge: {
+      into: "traffic_road_hourly",
+      on: "_id",
+      whenMatched: "replace",
+      whenNotMatched: "insert",
+    },
+  },
+];
+
+msg.mode = "collection";
+msg.collection = "traffic_detector_15m";
+msg.operation = "aggregate";
+msg.payload = [pipeline, { allowDiskUse: true }];
+return msg;`;
+
+const trafficLatestBuild = `// Promote the latest 15-minute detector bucket into a compact lookup collection.
+const hours = Math.max(1, Number(msg.lookbackHours || 6));
+const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+const pipeline = [
+  { $match: { binStart: { $gte: since } } },
+  { $sort: { detectorId: 1, binStart: -1 } },
+  {
+    $group: {
+      _id: "$detectorId",
+      latest: { $first: "$$ROOT" },
+    },
+  },
+  {
+    $replaceRoot: {
+      newRoot: {
+        $mergeObjects: [
+          "$latest",
+          { _id: "$_id", promotedAt: "$$NOW" },
+        ],
+      },
+    },
+  },
+  {
+    $merge: {
+      into: "traffic_latest",
+      on: "_id",
+      whenMatched: "replace",
+      whenNotMatched: "insert",
+    },
+  },
+];
+
+msg.mode = "collection";
+msg.collection = "traffic_detector_15m";
+msg.operation = "aggregate";
+msg.payload = [pipeline, { allowDiskUse: true }];
+return msg;`;
+
+const rainfallAggregateBuild = `// Build one network rainfall summary per 15-minute observation time.
+const hours = Math.max(1, Number(msg.lookbackHours || 6));
+const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+const pipeline = [
+  { $match: { obsTime: { $gte: since } } },
+  {
+    $group: {
+      _id: "$obsTime",
+      stationCount: { $sum: 1 },
+      missingStations: {
+        $sum: { $cond: [{ $eq: ["$qualityFlag", "missing"] }, 1, 0] },
+      },
+      rainingStations: {
+        $sum: { $cond: ["$isRaining", 1, 0] },
+      },
+      validStations: {
+        $sum: { $cond: [{ $ne: ["$rainfallMm", null] }, 1, 0] },
+      },
+      networkAvgMm: { $avg: "$rainfallMm" },
+      networkMaxMm: { $max: "$rainfallMm" },
+    },
+  },
+  { $set: { obsTime: "$_id" } },
+  {
+    $set: {
+      networkAvgMm: { $round: ["$networkAvgMm", 3] },
+      networkMaxMm: { $round: ["$networkMaxMm", 3] },
+      rainCategory: {
+        $switch: {
+          branches: [
+            { case: { $eq: ["$networkAvgMm", null] }, then: "unknown" },
+            { case: { $lte: ["$networkAvgMm", 0] }, then: "no-rain" },
+            { case: { $lt: ["$networkAvgMm", 1] }, then: "light" },
+            { case: { $lt: ["$networkAvgMm", 5] }, then: "moderate" },
+          ],
+          default: "heavy",
+        },
+      },
+      _id: {
+        $concat: [
+          "rainfall15:",
+          {
+            $dateToString: {
+              date: "$obsTime",
+              format: "%Y-%m-%dT%H:%M:%SZ",
+              timezone: "UTC",
+            },
+          },
+        ],
+      },
+    },
+  },
+  {
+    $merge: {
+      into: "rainfall_15m",
+      on: "_id",
+      whenMatched: "replace",
+      whenNotMatched: "insert",
+    },
+  },
+];
+
+msg.mode = "collection";
+msg.collection = "rainfall_observations";
+msg.operation = "aggregate";
+msg.payload = [pipeline, { allowDiskUse: true }];
+return msg;`;
+
+const weatherJoinBuild = `// Join detector 15-minute traffic with the matching weather bucket.
+const hours = Math.max(1, Number(msg.lookbackHours || 6));
+const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+const pipeline = [
+  { $match: { binStart: { $gte: since } } },
+  {
+    $lookup: {
+      from: "rainfall_15m",
+      localField: "binStart",
+      foreignField: "obsTime",
+      as: "weather",
+    },
+  },
+  {
+    $set: {
+      weatherMatched: { $gt: [{ $size: "$weather" }, 0] },
+    },
+  },
+  {
+    $set: {
+      networkAvgMm: {
+        $ifNull: [{ $arrayElemAt: ["$weather.networkAvgMm", 0] }, null],
+      },
+      networkMaxMm: {
+        $ifNull: [{ $arrayElemAt: ["$weather.networkMaxMm", 0] }, null],
+      },
+      rainingStations: {
+        $ifNull: [{ $arrayElemAt: ["$weather.rainingStations", 0] }, null],
+      },
+      missingStations: {
+        $ifNull: [{ $arrayElemAt: ["$weather.missingStations", 0] }, null],
+      },
+      rainCategory: {
+        $ifNull: [{ $arrayElemAt: ["$weather.rainCategory", 0] }, "unmatched"],
+      },
+    },
+  },
+  { $unset: "weather" },
+  {
+    $merge: {
+      into: "traffic_weather_15m",
+      on: "_id",
+      whenMatched: "replace",
+      whenNotMatched: "insert",
+    },
+  },
+];
+
+msg.mode = "collection";
+msg.collection = "traffic_detector_15m";
+msg.operation = "aggregate";
+msg.payload = [pipeline, { allowDiskUse: true }];
+return msg;`;
+
 const nodes = [
   {
     id: trafficTab,
@@ -641,6 +1105,15 @@ const nodes = [
     disabled: false,
     info:
       "Collects TD detector speed/volume/occupancy every 5 minutes and HKO hourly rainfall every 10 minutes.",
+    env: [],
+  },
+  {
+    id: analyticsTab,
+    type: "tab",
+    label: "Cleaning and Analytics",
+    disabled: false,
+    info:
+      "Builds retention-safe 15-minute detector aggregates, hourly road aggregates, network rainfall summaries, and weather-traffic joins.",
     env: [],
   },
   {
@@ -702,7 +1175,7 @@ const nodes = [
     "bulkWrite",
     1030,
     120,
-    ["1100000000000007"],
+    ["1100000000000007", "1100000000000101"],
   ),
   debugNode(
     "1100000000000007",
@@ -750,7 +1223,7 @@ const nodes = [
     "bulkWrite",
     830,
     260,
-    ["1100000000000012"],
+    ["1100000000000012", "1100000000000103"],
   ),
   debugNode(
     "1100000000000012",
@@ -874,6 +1347,244 @@ const nodes = [
     360,
     740,
     ["1100000000000014"],
+  ),
+  functionNode(
+    "1100000000000101",
+    trafficTab,
+    "Record traffic run",
+    trafficRunRecord,
+    1240,
+    180,
+    ["1100000000000102"],
+  ),
+  mongoNode(
+    "1100000000000102",
+    trafficTab,
+    "Save traffic run",
+    "ingestion_runs",
+    "updateOne",
+    1450,
+    180,
+    ["1100000000000104"],
+  ),
+  debugNode(
+    "1100000000000104",
+    trafficTab,
+    "Traffic run saved",
+    1660,
+    180,
+    "payload.acknowledged",
+  ),
+  functionNode(
+    "1100000000000103",
+    trafficTab,
+    "Record weather run",
+    weatherRunRecord,
+    1040,
+    320,
+    ["1100000000000105"],
+  ),
+  mongoNode(
+    "1100000000000105",
+    trafficTab,
+    "Save weather run",
+    "ingestion_runs",
+    "updateOne",
+    1250,
+    320,
+    ["1100000000000106"],
+  ),
+  debugNode(
+    "1100000000000106",
+    trafficTab,
+    "Weather run saved",
+    1460,
+    320,
+    "payload.acknowledged",
+  ),
+
+  {
+    id: "3300000000000002",
+    type: "inject",
+    z: analyticsTab,
+    name: "Backfill last 20 days once",
+    props: [{ p: "payload", v: "480", vt: "num" }],
+    repeat: "",
+    crontab: "",
+    once: true,
+    onceDelay: "120",
+    topic: "lookbackHours",
+    payload: "480",
+    payloadType: "num",
+    x: 180,
+    y: 160,
+    wires: [["3300000000000004"]],
+  },
+  {
+    id: "3300000000000003",
+    type: "inject",
+    z: analyticsTab,
+    name: "Update last 6 hours",
+    props: [{ p: "payload", v: "6", vt: "num" }],
+    repeat: "900",
+    crontab: "",
+    once: true,
+    onceDelay: "180",
+    topic: "lookbackHours",
+    payload: "6",
+    payloadType: "num",
+    x: 160,
+    y: 260,
+    wires: [["3300000000000004"]],
+  },
+  functionNode(
+    "3300000000000004",
+    analyticsTab,
+    "Build traffic 15-minute aggregate",
+    trafficAggregateBuild,
+    430,
+    200,
+    ["3300000000000005"],
+  ),
+  {
+    id: "3300000000000005",
+    type: "mongodb4",
+    z: analyticsTab,
+    clientNode: mongodbClient,
+    mode: "collection",
+    collection: "traffic_observations",
+    operation: "aggregate",
+    output: "toArray",
+    maxTimeMS: "",
+    handleDocId: false,
+    name: "Merge traffic_detector_15m",
+    x: 720,
+     y: 200,
+    wires: [["3300000000000006"]],
+  },
+  functionNode(
+    "3300000000000006",
+    analyticsTab,
+    "Build hourly road aggregate",
+    trafficRoadBuild,
+    430,
+    320,
+    ["3300000000000007"],
+  ),
+  {
+    id: "3300000000000007",
+    type: "mongodb4",
+    z: analyticsTab,
+    clientNode: mongodbClient,
+    mode: "collection",
+    collection: "traffic_detector_15m",
+    operation: "aggregate",
+    output: "toArray",
+    maxTimeMS: "",
+    handleDocId: false,
+    name: "Merge traffic_road_hourly",
+    x: 700,
+     y: 320,
+    wires: [["3300000000000020"]],
+  },
+  functionNode(
+    "3300000000000020",
+    analyticsTab,
+    "Build latest detector state",
+    trafficLatestBuild,
+    430,
+    380,
+    ["3300000000000021"],
+  ),
+  {
+    id: "3300000000000021",
+    type: "mongodb4",
+    z: analyticsTab,
+    clientNode: mongodbClient,
+    mode: "collection",
+    collection: "traffic_detector_15m",
+    operation: "aggregate",
+    output: "toArray",
+    maxTimeMS: "",
+    handleDocId: false,
+    name: "Merge traffic_latest",
+    x: 700,
+     y: 380,
+    wires: [["3300000000000008"]],
+  },
+  functionNode(
+    "3300000000000008",
+    analyticsTab,
+    "Build rainfall summary",
+    rainfallAggregateBuild,
+    430,
+    440,
+    ["3300000000000009"],
+  ),
+  {
+    id: "3300000000000009",
+    type: "mongodb4",
+    z: analyticsTab,
+    clientNode: mongodbClient,
+    mode: "collection",
+    collection: "rainfall_observations",
+    operation: "aggregate",
+    output: "toArray",
+    maxTimeMS: "",
+    handleDocId: false,
+    name: "Merge rainfall_15m",
+    x: 680,
+     y: 440,
+    wires: [["3300000000000010"]],
+  },
+  functionNode(
+    "3300000000000010",
+    analyticsTab,
+    "Build weather join",
+    weatherJoinBuild,
+    430,
+    560,
+    ["3300000000000011"],
+  ),
+  {
+    id: "3300000000000011",
+    type: "mongodb4",
+    z: analyticsTab,
+    clientNode: mongodbClient,
+    mode: "collection",
+    collection: "traffic_detector_15m",
+    operation: "aggregate",
+    output: "toArray",
+    maxTimeMS: "",
+    handleDocId: false,
+    name: "Merge traffic_weather_15m",
+    x: 680,
+     y: 560,
+    wires: [["3300000000000012"]],
+  },
+  debugNode(
+    "3300000000000012",
+    analyticsTab,
+    "Analytics aggregate result",
+    940,
+    560,
+    "payload.length",
+  ),
+  catchNode(
+    "3300000000000013",
+    analyticsTab,
+    "Analytics errors",
+    430,
+    700,
+    ["3300000000000014"],
+  ),
+  debugNode(
+    "3300000000000014",
+    analyticsTab,
+    "Analytics error",
+    680,
+    700,
+    "error.message",
   ),
 
   injectNode(

@@ -84,6 +84,7 @@ The MongoDB seed is imported only when its named volume is initialized. Changing
 | Traffic speed, volume, and occupancy | `rawSpeedVol-all.xml` | Every 5 minutes |
 | Detector location catalog | `traffic_speed_volume_occ_info.csv` | Every hour |
 | Rainfall in the past hour | HKO `hourlyRainfall.php` | Every 10 minutes |
+| 15-minute detector, road, and weather aggregates | Internal MongoDB | Every 15 minutes |
 
 Failed HTTP requests are retried after 30 seconds.
 
@@ -94,8 +95,37 @@ Failed HTTP requests are retried after 30 seconds.
 | `traffic_observations` | Raw detector-lane observations |
 | `traffic_detector_catalog` | Road, district, direction, and coordinate metadata |
 | `rainfall_observations` | Automatic weather station rainfall observations |
+| `ingestion_runs` | Compact success records for each traffic and weather poll |
+| `traffic_detector_15m` | Cleaned, volume-weighted detector aggregates |
+| `traffic_latest` | One latest usable state per detector for KPIs and maps |
+| `traffic_road_hourly` | Hourly road and direction aggregates |
+| `rainfall_15m` | Network rainfall summaries per official observation time |
+| `traffic_weather_15m` | Detector aggregates joined to matching rainfall |
 
 Raw observations are retained so the cleaning rules can be revised without collecting everything again.
+
+## Data retention and recycling
+
+The project supplies both near-real-time observations and rolling historical analysis, so it uses layered retention:
+
+| Collection | Retention |
+|---|---|
+| `traffic_observations` | Latest 8 days |
+| `rainfall_observations` | Latest 30 days |
+| `ingestion_runs` | Latest 30 days |
+| 15-minute, hourly, and weather aggregates | Long term |
+
+The eight-day traffic window preserves a complete seven-day raw data period plus one day of operational buffer. Raw traffic is removed automatically through MongoDB TTL indexes after the aggregate flow has materialized the analytical data.
+
+The cleaning flow performs a twenty-day backfill shortly after startup, which captures all data currently accumulated for the project, and then updates the latest six hours every 15 minutes. All derived writes use deterministic keys and `$merge`, making repeated runs idempotent. Long-term history remains available through the aggregate collections after older raw traffic is removed.
+
+For an existing MongoDB data volume created before these indexes were added, apply the retention indexes once:
+
+```bash
+docker compose exec -T mongo mongosh smartcity --quiet --eval 'db.traffic_observations.createIndex({observedAt:1},{name:"ttl_observedAt_8d",expireAfterSeconds:691200}); db.rainfall_observations.createIndex({obsTime:1},{name:"ttl_obsTime_30d",expireAfterSeconds:2592000}); db.ingestion_runs.createIndex({runAt:1},{name:"ttl_runAt_30d",expireAfterSeconds:2592000})'
+```
+
+Do not add these TTL indexes until the aggregate collections have covered the historical period that must be retained.
 
 ## Verify the stack
 
@@ -118,6 +148,21 @@ docker compose ps
 docker compose exec -T mongo mongosh smartcity --quiet \
   --eval "db.getCollectionNames()"
 docker compose logs --tail 100 node-red
+```
+
+Validate the derived analytics collections:
+
+```bash
+./tools/check_collection.sh
+cat tools/verify_analytics.js | \
+  docker compose exec -T mongo mongosh smartcity --quiet
+```
+
+Windows PowerShell:
+
+```powershell
+Get-Content -Raw .\tools\verify_analytics.js |
+  docker compose exec -T mongo mongosh smartcity --quiet
 ```
 
 Expected collections:
@@ -154,6 +199,14 @@ docker compose up -d --build
 ```
 
 ## Export the latest data
+
+For the final submission, use the dedicated export script:
+
+```bash
+./tools/export_submission.sh
+```
+
+It exports the most recent seven days of raw observations together with long-term aggregates and generates a manifest and checksum.
 
 Create a transferable database archive:
 

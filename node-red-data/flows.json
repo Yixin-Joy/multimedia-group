@@ -8,6 +8,14 @@
     "env": []
   },
   {
+    "id": "3300000000000001",
+    "type": "tab",
+    "label": "Cleaning and Analytics",
+    "disabled": false,
+    "info": "Builds retention-safe 15-minute detector aggregates, hourly road aggregates, network rainfall summaries, and weather-traffic joins.",
+    "env": []
+  },
+  {
     "id": "1100000000000002",
     "type": "inject",
     "z": "1100000000000001",
@@ -81,7 +89,7 @@
     "type": "function",
     "z": "1100000000000001",
     "name": "Normalize lane rows",
-    "func": "// Convert rawSpeedVol-all.xml into one row per detector lane and interval.\nconst asArray = (value) => value == null ? [] : (Array.isArray(value) ? value : [value]);\nconst root = msg.payload && msg.payload.raw_speed_volume_list\n  ? msg.payload.raw_speed_volume_list\n  : msg.payload;\n\nif (!root) {\n  node.error(\"Traffic XML did not contain raw_speed_volume_list\", msg);\n  return null;\n}\n\nconst first = (value) => Array.isArray(value) ? value[0] : value;\nconst children = (container, key) =>\n  asArray(container).flatMap((item) => asArray(item && item[key]));\nconst text = (value) => String(first(value) ?? \"\").trim();\n\nconst sourceDate = text(root.date);\nconst periods = children(root.periods, \"period\");\nconst fetchedAt = new Date();\nconst operations = [];\nlet detectorIntervals = 0;\nlet invalidRows = 0;\n\nfor (const period of periods) {\n  const periodFrom = text(period.period_from);\n  const periodTo = text(period.period_to);\n  const observedAt = periodFrom\n    ? new Date(sourceDate + \"T\" + periodFrom + \"+08:00\")\n    : fetchedAt;\n  const detectors = children(period.detectors, \"detector\");\n\n  for (const detector of detectors) {\n    const detectorId = text(detector.detector_id);\n    const direction = text(detector.direction);\n    const lanes = children(detector.lanes, \"lane\");\n    if (detectorId) detectorIntervals += 1;\n\n    for (const lane of lanes) {\n      const laneId = text(lane.lane_id);\n      const speed = Number(first(lane.speed));\n      if (!detectorId || !laneId || !Number.isFinite(speed)) {\n        invalidRows += 1;\n        continue;\n      }\n\n      const valid = text(lane.valid).toUpperCase() === \"Y\";\n      const id = [\n        \"traffic\",\n        sourceDate,\n        periodFrom,\n        detectorId,\n        laneId,\n      ].join(\":\");\n\n      operations.push({\n        updateOne: {\n          filter: { _id: id },\n          update: {\n            $setOnInsert: {\n              _id: id,\n              source: \"TD rawSpeedVol-all.xml\",\n              sourceDate,\n              periodFrom,\n              periodTo,\n              observedAt,\n              fetchedAt,\n              detectorId,\n              direction,\n              laneId,\n              speedKmh: speed,\n              occupancyPct: Number.isFinite(Number(first(lane.occupancy)))\n                ? Number(first(lane.occupancy))\n                : null,\n              volume: Number.isFinite(Number(first(lane.volume)))\n                ? Number(first(lane.volume))\n                : null,\n              speedStdDev: Number.isFinite(Number(first(lane[\"s.d.\"])))\n                ? Number(first(lane[\"s.d.\"]))\n                : null,\n              valid,\n            },\n          },\n          upsert: true,\n        },\n      });\n    }\n  }\n}\n\nif (!operations.length) {\n  node.error(\"Traffic XML produced no valid lane observations\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_observations\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = {\n  sourceRows: operations.length,\n  detectorIntervals,\n  invalidRows,\n  periods: periods.length,\n};\nnode.status({\n  fill: \"green\",\n  shape: \"dot\",\n  text: operations.length + \" rows / \" + periods.length + \" periods\",\n});\nreturn msg;",
+    "func": "// Convert rawSpeedVol-all.xml into one row per detector lane and interval.\nconst asArray = (value) => value == null ? [] : (Array.isArray(value) ? value : [value]);\nconst root = msg.payload && msg.payload.raw_speed_volume_list\n  ? msg.payload.raw_speed_volume_list\n  : msg.payload;\n\nif (!root) {\n  node.error(\"Traffic XML did not contain raw_speed_volume_list\", msg);\n  return null;\n}\n\nconst first = (value) => Array.isArray(value) ? value[0] : value;\nconst children = (container, key) =>\n  asArray(container).flatMap((item) => asArray(item && item[key]));\nconst text = (value) => String(first(value) ?? \"\").trim();\n\nconst sourceDate = text(root.date);\nconst periods = children(root.periods, \"period\");\nconst fetchedAt = new Date();\nconst operations = [];\nlet detectorIntervals = 0;\nlet invalidRows = 0;\nconst sourcePeriods = [];\n\nfor (const period of periods) {\n  const periodFrom = text(period.period_from);\n  const periodTo = text(period.period_to);\n  if (periodFrom) sourcePeriods.push(periodFrom);\n  const observedAt = periodFrom\n    ? new Date(sourceDate + \"T\" + periodFrom + \"+08:00\")\n    : fetchedAt;\n  const detectors = children(period.detectors, \"detector\");\n\n  for (const detector of detectors) {\n    const detectorId = text(detector.detector_id);\n    const direction = text(detector.direction);\n    const lanes = children(detector.lanes, \"lane\");\n    if (detectorId) detectorIntervals += 1;\n\n    for (const lane of lanes) {\n      const laneId = text(lane.lane_id);\n      const speed = Number(first(lane.speed));\n      if (!detectorId || !laneId || !Number.isFinite(speed)) {\n        invalidRows += 1;\n        continue;\n      }\n\n      const valid = text(lane.valid).toUpperCase() === \"Y\";\n      const id = [\n        \"traffic\",\n        sourceDate,\n        periodFrom,\n        detectorId,\n        laneId,\n      ].join(\":\");\n\n      operations.push({\n        updateOne: {\n          filter: { _id: id },\n          update: {\n            $setOnInsert: {\n              _id: id,\n              source: \"TD rawSpeedVol-all.xml\",\n              sourceDate,\n              periodFrom,\n              periodTo,\n              observedAt,\n              fetchedAt,\n              detectorId,\n              direction,\n              laneId,\n              speedKmh: speed,\n              occupancyPct: Number.isFinite(Number(first(lane.occupancy)))\n                ? Number(first(lane.occupancy))\n                : null,\n              volume: Number.isFinite(Number(first(lane.volume)))\n                ? Number(first(lane.volume))\n                : null,\n              speedStdDev: Number.isFinite(Number(first(lane[\"s.d.\"])))\n                ? Number(first(lane[\"s.d.\"]))\n                : null,\n              valid,\n            },\n          },\n          upsert: true,\n        },\n      });\n    }\n  }\n}\n\nif (!operations.length) {\n  node.error(\"Traffic XML produced no valid lane observations\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_observations\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = {\n  sourceRows: operations.length,\n  detectorIntervals,\n  invalidRows,\n  periods: periods.length,\n  sourceDate,\n  firstPeriod: sourcePeriods[0] || null,\n  lastPeriod: sourcePeriods[sourcePeriods.length - 1] || null,\n};\nnode.status({\n  fill: \"green\",\n  shape: \"dot\",\n  text: operations.length + \" rows / \" + periods.length + \" periods\",\n});\nreturn msg;",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -112,7 +120,8 @@
     "y": 120,
     "wires": [
       [
-        "1100000000000007"
+        "1100000000000007",
+        "1100000000000101"
       ]
     ]
   },
@@ -191,7 +200,7 @@
     "type": "function",
     "z": "1100000000000001",
     "name": "Normalize rainfall",
-    "func": "// Normalize HKO hourly rainfall to one observation per station and hour.\nlet raw = msg.payload;\nif (typeof raw === \"string\") {\n  raw = JSON.parse(raw.replace(/^\\uFEFF/, \"\"));\n}\nif (!raw || !Array.isArray(raw.hourlyRainfall)) {\n  node.error(\"HKO response did not contain hourlyRainfall\", msg);\n  return null;\n}\n\nconst fetchedAt = new Date();\nconst obsTime = raw.obsTime ? new Date(raw.obsTime) : fetchedAt;\nconst operations = [];\nlet missing = 0;\nlet trace = 0;\n\nfor (const station of raw.hourlyRainfall) {\n  const stationId = String(station.automaticWeatherStationID || \"\").trim();\n  if (!stationId) continue;\n\n  const rawValue = String(station.value ?? \"\").trim().toUpperCase();\n  let rainfallMm = null;\n  let qualityFlag = \"ok\";\n  if (rawValue === \"M\") {\n    missing += 1;\n    qualityFlag = \"missing\";\n  } else if (rawValue === \"T\") {\n    trace += 1;\n    rainfallMm = 0;\n    qualityFlag = \"trace\";\n  } else if (rawValue !== \"\" && Number.isFinite(Number(rawValue))) {\n    rainfallMm = Number(rawValue);\n  } else {\n    missing += 1;\n    qualityFlag = \"missing\";\n  }\n\n  const id = \"rainfall:\" + obsTime.toISOString() + \":\" + stationId;\n  operations.push({\n    updateOne: {\n      filter: { _id: id },\n      update: {\n        $setOnInsert: {\n          _id: id,\n          source: \"HKO hourlyRainfall API\",\n          stationId,\n          stationName: String(station.automaticWeatherStation || \"\").trim(),\n          obsTime,\n          fetchedAt,\n          rainfallValueRaw: station.value,\n          rainfallMm,\n          unit: station.unit || \"mm\",\n          qualityFlag,\n          isRaining: rainfallMm != null && rainfallMm > 0,\n        },\n      },\n      upsert: true,\n    },\n  });\n}\n\nif (!operations.length) {\n  node.error(\"HKO response produced no station observations\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"rainfall_observations\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = { sourceRows: operations.length, missing, trace };\nnode.status({ fill: \"green\", shape: \"dot\", text: operations.length + \" stations\" });\nreturn msg;",
+    "func": "// Normalize HKO hourly rainfall to one observation per station and hour.\nlet raw = msg.payload;\nif (typeof raw === \"string\") {\n  raw = JSON.parse(raw.replace(/^\\uFEFF/, \"\"));\n}\nif (!raw || !Array.isArray(raw.hourlyRainfall)) {\n  node.error(\"HKO response did not contain hourlyRainfall\", msg);\n  return null;\n}\n\nconst fetchedAt = new Date();\nconst obsTime = raw.obsTime ? new Date(raw.obsTime) : fetchedAt;\nconst operations = [];\nlet missing = 0;\nlet trace = 0;\n\nfor (const station of raw.hourlyRainfall) {\n  const stationId = String(station.automaticWeatherStationID || \"\").trim();\n  if (!stationId) continue;\n\n  const rawValue = String(station.value ?? \"\").trim().toUpperCase();\n  let rainfallMm = null;\n  let qualityFlag = \"ok\";\n  if (rawValue === \"M\") {\n    missing += 1;\n    qualityFlag = \"missing\";\n  } else if (rawValue === \"T\") {\n    trace += 1;\n    rainfallMm = 0;\n    qualityFlag = \"trace\";\n  } else if (rawValue !== \"\" && Number.isFinite(Number(rawValue))) {\n    rainfallMm = Number(rawValue);\n  } else {\n    missing += 1;\n    qualityFlag = \"missing\";\n  }\n\n  const id = \"rainfall:\" + obsTime.toISOString() + \":\" + stationId;\n  operations.push({\n    updateOne: {\n      filter: { _id: id },\n      update: {\n        $setOnInsert: {\n          _id: id,\n          source: \"HKO hourlyRainfall API\",\n          stationId,\n          stationName: String(station.automaticWeatherStation || \"\").trim(),\n          obsTime,\n          fetchedAt,\n          rainfallValueRaw: station.value,\n          rainfallMm,\n          unit: station.unit || \"mm\",\n          qualityFlag,\n          isRaining: rainfallMm != null && rainfallMm > 0,\n        },\n      },\n      upsert: true,\n    },\n  });\n}\n\nif (!operations.length) {\n  node.error(\"HKO response produced no station observations\", msg);\n  return null;\n}\n\nmsg.mode = \"collection\";\nmsg.collection = \"rainfall_observations\";\nmsg.operation = \"bulkWrite\";\nmsg.payload = [operations, { ordered: false }];\nmsg.meta = {\n  sourceRows: operations.length,\n  missing,\n  trace,\n  obsTime: obsTime.toISOString(),\n};\nnode.status({ fill: \"green\", shape: \"dot\", text: operations.length + \" stations\" });\nreturn msg;",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -222,7 +231,8 @@
     "y": 260,
     "wires": [
       [
-        "1100000000000012"
+        "1100000000000012",
+        "1100000000000103"
       ]
     ]
   },
@@ -510,6 +520,423 @@
         "1100000000000014"
       ]
     ]
+  },
+  {
+    "id": "1100000000000101",
+    "type": "function",
+    "z": "1100000000000001",
+    "name": "Record traffic run",
+    "func": "// Persist a compact success record for each traffic poll.\nconst write = msg.payload || {};\nconst meta = msg.meta || {};\nconst runAt = new Date();\nconst runId = \"trafficRun:\" + runAt.toISOString();\nconst document = {\n  _id: runId,\n  source: \"traffic\",\n  runAt,\n  sourceDate: meta.sourceDate || null,\n  firstPeriod: meta.firstPeriod || null,\n  lastPeriod: meta.lastPeriod || null,\n  periods: meta.periods || 0,\n  detectorIntervals: meta.detectorIntervals || 0,\n  attemptedRows: meta.sourceRows || 0,\n  invalidRows: meta.invalidRows || 0,\n  insertedRows: write.upsertedCount || 0,\n  duplicateRows: write.matchedCount || 0,\n  modifiedRows: write.modifiedCount || 0,\n  status: \"success\",\n};\n\nmsg.mode = \"collection\";\nmsg.collection = \"ingestion_runs\";\nmsg.operation = \"updateOne\";\nmsg.payload = [{ _id: runId }, { $setOnInsert: document }, { upsert: true }];\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1240,
+    "y": 180,
+    "wires": [
+      [
+        "1100000000000102"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000102",
+    "type": "mongodb4",
+    "z": "1100000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "ingestion_runs",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Save traffic run",
+    "x": 1450,
+    "y": 180,
+    "wires": [
+      [
+        "1100000000000104"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000104",
+    "type": "debug",
+    "z": "1100000000000001",
+    "name": "Traffic run saved",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload.acknowledged",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1660,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "1100000000000103",
+    "type": "function",
+    "z": "1100000000000001",
+    "name": "Record weather run",
+    "func": "// Persist a compact success record for each weather poll.\nconst write = msg.payload || {};\nconst meta = msg.meta || {};\nconst runAt = new Date();\nconst runId = \"rainfallRun:\" + runAt.toISOString();\nconst document = {\n  _id: runId,\n  source: \"rainfall\",\n  runAt,\n  obsTime: meta.obsTime ? new Date(meta.obsTime) : null,\n  attemptedRows: meta.sourceRows || 0,\n  missingRows: meta.missing || 0,\n  traceRows: meta.trace || 0,\n  insertedRows: write.upsertedCount || 0,\n  duplicateRows: write.matchedCount || 0,\n  status: \"success\",\n};\n\nmsg.mode = \"collection\";\nmsg.collection = \"ingestion_runs\";\nmsg.operation = \"updateOne\";\nmsg.payload = [{ _id: runId }, { $setOnInsert: document }, { upsert: true }];\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1040,
+    "y": 320,
+    "wires": [
+      [
+        "1100000000000105"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000105",
+    "type": "mongodb4",
+    "z": "1100000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "ingestion_runs",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Save weather run",
+    "x": 1250,
+    "y": 320,
+    "wires": [
+      [
+        "1100000000000106"
+      ]
+    ]
+  },
+  {
+    "id": "1100000000000106",
+    "type": "debug",
+    "z": "1100000000000001",
+    "name": "Weather run saved",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload.acknowledged",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1460,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "3300000000000002",
+    "type": "inject",
+    "z": "3300000000000001",
+    "name": "Backfill last 20 days once",
+    "props": [
+      {
+        "p": "payload",
+        "v": "480",
+        "vt": "num"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "120",
+    "topic": "lookbackHours",
+    "payload": "480",
+    "payloadType": "num",
+    "x": 180,
+    "y": 160,
+    "wires": [
+      [
+        "3300000000000004"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000003",
+    "type": "inject",
+    "z": "3300000000000001",
+    "name": "Update last 6 hours",
+    "props": [
+      {
+        "p": "payload",
+        "v": "6",
+        "vt": "num"
+      }
+    ],
+    "repeat": "900",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "180",
+    "topic": "lookbackHours",
+    "payload": "6",
+    "payloadType": "num",
+    "x": 160,
+    "y": 260,
+    "wires": [
+      [
+        "3300000000000004"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000004",
+    "type": "function",
+    "z": "3300000000000001",
+    "name": "Build traffic 15-minute aggregate",
+    "func": "// Build detector-level 15-minute traffic aggregates.\nconst hours = Math.max(1, Number(msg.lookbackHours || msg.payload || 6));\nconst since = new Date(Date.now() - hours * 60 * 60 * 1000);\nmsg.lookbackHours = hours;\nmsg.since = since;\n\nconst pipeline = [\n  {\n    $match: {\n      valid: true,\n      speedKmh: { $gte: 0, $lte: 200 },\n      occupancyPct: { $gte: 0, $lte: 100 },\n      observedAt: { $gte: since },\n    },\n  },\n  {\n    $set: {\n      binStart: {\n        $dateTrunc: { date: \"$observedAt\", unit: \"minute\", binSize: 15 },\n      },\n    },\n  },\n  {\n    $group: {\n      _id: { detectorId: \"$detectorId\", binStart: \"$binStart\" },\n      direction: { $max: \"$direction\" },\n      totalVolume: {\n        $sum: {\n          $cond: [\n            { $and: [{ $ne: [\"$volume\", null] }, { $gte: [\"$volume\", 0] }] },\n            \"$volume\",\n            0,\n          ],\n        },\n      },\n      weightedSpeedSum: {\n        $sum: {\n          $cond: [\n            { $and: [{ $gt: [\"$volume\", 0] }, { $ne: [\"$speedKmh\", null] }] },\n            { $multiply: [\"$speedKmh\", \"$volume\"] },\n            0,\n          ],\n        },\n      },\n      meanSpeedKmh: { $avg: \"$speedKmh\" },\n      avgOccupancyPct: { $avg: \"$occupancyPct\" },\n      laneIds: { $addToSet: \"$laneId\" },\n      observationCount: { $sum: 1 },\n      latestObservedAt: { $max: \"$observedAt\" },\n    },\n  },\n  {\n    $set: {\n      avgSpeedKmh: {\n        $cond: [\n          { $gt: [\"$totalVolume\", 0] },\n          { $divide: [\"$weightedSpeedSum\", \"$totalVolume\"] },\n          \"$meanSpeedKmh\",\n        ],\n      },\n      laneCount: { $size: \"$laneIds\" },\n    },\n  },\n  {\n    $lookup: {\n      from: \"traffic_detector_catalog\",\n      localField: \"_id.detectorId\",\n      foreignField: \"detectorId\",\n      as: \"catalog\",\n    },\n  },\n  { $unwind: { path: \"$catalog\", preserveNullAndEmptyArrays: true } },\n  {\n    $project: {\n      _id: 0,\n      detectorId: \"$_id.detectorId\",\n      binStart: \"$_id.binStart\",\n      direction: { $ifNull: [\"$direction\", \"\"] },\n      district: { $ifNull: [\"$catalog.district\", \"Unknown\"] },\n      roadEn: { $ifNull: [\"$catalog.roadEn\", \"\"] },\n      roadBase: {\n        $trim: {\n          input: {\n            $arrayElemAt: [\n              { $split: [{ $ifNull: [\"$catalog.roadEn\", \"\"] }, \" near \"] },\n              0,\n            ],\n          },\n        },\n      },\n      latitude: { $ifNull: [\"$catalog.latitude\", null] },\n      longitude: { $ifNull: [\"$catalog.longitude\", null] },\n      avgSpeedKmh: { $round: [\"$avgSpeedKmh\", 2] },\n      totalVolume: 1,\n      avgOccupancyPct: { $round: [\"$avgOccupancyPct\", 2] },\n      laneCount: 1,\n      laneIds: 1,\n      observationCount: 1,\n      latestObservedAt: 1,\n    },\n  },\n  {\n    $set: {\n      lowSpeed: { $and: [{ $lt: [\"$avgSpeedKmh\", 20] }, { $gt: [\"$totalVolume\", 0] }] },\n      speedBand: {\n        $switch: {\n          branches: [\n            { case: { $lt: [\"$avgSpeedKmh\", 20] }, then: \"severe\" },\n            { case: { $lt: [\"$avgSpeedKmh\", 40] }, then: \"slow\" },\n            { case: { $lt: [\"$avgSpeedKmh\", 60] }, then: \"moderate\" },\n          ],\n          default: \"smooth\",\n        },\n      },\n      _id: {\n        $concat: [\n          \"traffic15:\",\n          {\n            $dateToString: {\n              date: \"$binStart\",\n              format: \"%Y-%m-%dT%H:%M:%SZ\",\n              timezone: \"UTC\",\n            },\n          },\n          \":\",\n          \"$detectorId\",\n        ],\n      },\n    },\n  },\n  {\n    $merge: {\n      into: \"traffic_detector_15m\",\n      on: \"_id\",\n      whenMatched: \"replace\",\n      whenNotMatched: \"insert\",\n    },\n  },\n];\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_observations\";\nmsg.operation = \"aggregate\";\nmsg.payload = [pipeline, { allowDiskUse: true }];\nnode.status({ fill: \"blue\", shape: \"dot\", text: \"aggregate \" + hours + \"h\" });\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 200,
+    "wires": [
+      [
+        "3300000000000005"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000005",
+    "type": "mongodb4",
+    "z": "3300000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "traffic_observations",
+    "operation": "aggregate",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Merge traffic_detector_15m",
+    "x": 720,
+    "y": 200,
+    "wires": [
+      [
+        "3300000000000006"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000006",
+    "type": "function",
+    "z": "3300000000000001",
+    "name": "Build hourly road aggregate",
+    "func": "// Build hourly road aggregates from detector 15-minute data.\nconst hours = Math.max(1, Number(msg.lookbackHours || 6));\nconst since = new Date(Date.now() - hours * 60 * 60 * 1000);\n\nconst pipeline = [\n  { $match: { binStart: { $gte: since }, roadBase: { $ne: \"\" } } },\n  {\n    $set: {\n      hourStart: {\n        $dateTrunc: { date: \"$binStart\", unit: \"hour\" },\n      },\n    },\n  },\n  {\n    $group: {\n      _id: {\n        hourStart: \"$hourStart\",\n        roadBase: \"$roadBase\",\n        direction: \"$direction\",\n      },\n      totalVolume: { $sum: \"$totalVolume\" },\n      weightedSpeedSum: {\n        $sum: { $multiply: [\"$avgSpeedKmh\", \"$totalVolume\"] },\n      },\n      meanSpeedKmh: { $avg: \"$avgSpeedKmh\" },\n      detectors: { $addToSet: \"$detectorId\" },\n      lowSpeedBuckets: { $sum: { $cond: [\"$lowSpeed\", 1, 0] } },\n      binCount: { $sum: 1 },\n    },\n  },\n  {\n    $project: {\n      _id: 0,\n      hourStart: \"$_id.hourStart\",\n      roadBase: \"$_id.roadBase\",\n      direction: \"$_id.direction\",\n      totalVolume: 1,\n      detectorCount: { $size: \"$detectors\" },\n      detectorIds: \"$detectors\",\n      lowSpeedBuckets: 1,\n      binCount: 1,\n      avgSpeedKmh: {\n        $round: [\n          {\n            $cond: [\n              { $gt: [\"$totalVolume\", 0] },\n              { $divide: [\"$weightedSpeedSum\", \"$totalVolume\"] },\n              \"$meanSpeedKmh\",\n            ],\n          },\n          2,\n        ],\n      },\n    },\n  },\n  {\n    $set: {\n      _id: {\n        $concat: [\n          \"roadHour:\",\n          {\n            $dateToString: {\n              date: \"$hourStart\",\n              format: \"%Y-%m-%dT%H:00:00Z\",\n              timezone: \"UTC\",\n            },\n          },\n          \":\",\n          \"$roadBase\",\n          \":\",\n          \"$direction\",\n        ],\n      },\n    },\n  },\n  {\n    $merge: {\n      into: \"traffic_road_hourly\",\n      on: \"_id\",\n      whenMatched: \"replace\",\n      whenNotMatched: \"insert\",\n    },\n  },\n];\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_detector_15m\";\nmsg.operation = \"aggregate\";\nmsg.payload = [pipeline, { allowDiskUse: true }];\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 320,
+    "wires": [
+      [
+        "3300000000000007"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000007",
+    "type": "mongodb4",
+    "z": "3300000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "traffic_detector_15m",
+    "operation": "aggregate",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Merge traffic_road_hourly",
+    "x": 700,
+    "y": 320,
+    "wires": [
+      [
+        "3300000000000020"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000020",
+    "type": "function",
+    "z": "3300000000000001",
+    "name": "Build latest detector state",
+    "func": "// Promote the latest 15-minute detector bucket into a compact lookup collection.\nconst hours = Math.max(1, Number(msg.lookbackHours || 6));\nconst since = new Date(Date.now() - hours * 60 * 60 * 1000);\n\nconst pipeline = [\n  { $match: { binStart: { $gte: since } } },\n  { $sort: { detectorId: 1, binStart: -1 } },\n  {\n    $group: {\n      _id: \"$detectorId\",\n      latest: { $first: \"$$ROOT\" },\n    },\n  },\n  {\n    $replaceRoot: {\n      newRoot: {\n        $mergeObjects: [\n          \"$latest\",\n          { _id: \"$_id\", promotedAt: \"$$NOW\" },\n        ],\n      },\n    },\n  },\n  {\n    $merge: {\n      into: \"traffic_latest\",\n      on: \"_id\",\n      whenMatched: \"replace\",\n      whenNotMatched: \"insert\",\n    },\n  },\n];\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_detector_15m\";\nmsg.operation = \"aggregate\";\nmsg.payload = [pipeline, { allowDiskUse: true }];\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 380,
+    "wires": [
+      [
+        "3300000000000021"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000021",
+    "type": "mongodb4",
+    "z": "3300000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "traffic_detector_15m",
+    "operation": "aggregate",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Merge traffic_latest",
+    "x": 700,
+    "y": 380,
+    "wires": [
+      [
+        "3300000000000008"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000008",
+    "type": "function",
+    "z": "3300000000000001",
+    "name": "Build rainfall summary",
+    "func": "// Build one network rainfall summary per 15-minute observation time.\nconst hours = Math.max(1, Number(msg.lookbackHours || 6));\nconst since = new Date(Date.now() - hours * 60 * 60 * 1000);\n\nconst pipeline = [\n  { $match: { obsTime: { $gte: since } } },\n  {\n    $group: {\n      _id: \"$obsTime\",\n      stationCount: { $sum: 1 },\n      missingStations: {\n        $sum: { $cond: [{ $eq: [\"$qualityFlag\", \"missing\"] }, 1, 0] },\n      },\n      rainingStations: {\n        $sum: { $cond: [\"$isRaining\", 1, 0] },\n      },\n      validStations: {\n        $sum: { $cond: [{ $ne: [\"$rainfallMm\", null] }, 1, 0] },\n      },\n      networkAvgMm: { $avg: \"$rainfallMm\" },\n      networkMaxMm: { $max: \"$rainfallMm\" },\n    },\n  },\n  { $set: { obsTime: \"$_id\" } },\n  {\n    $set: {\n      networkAvgMm: { $round: [\"$networkAvgMm\", 3] },\n      networkMaxMm: { $round: [\"$networkMaxMm\", 3] },\n      rainCategory: {\n        $switch: {\n          branches: [\n            { case: { $eq: [\"$networkAvgMm\", null] }, then: \"unknown\" },\n            { case: { $lte: [\"$networkAvgMm\", 0] }, then: \"no-rain\" },\n            { case: { $lt: [\"$networkAvgMm\", 1] }, then: \"light\" },\n            { case: { $lt: [\"$networkAvgMm\", 5] }, then: \"moderate\" },\n          ],\n          default: \"heavy\",\n        },\n      },\n      _id: {\n        $concat: [\n          \"rainfall15:\",\n          {\n            $dateToString: {\n              date: \"$obsTime\",\n              format: \"%Y-%m-%dT%H:%M:%SZ\",\n              timezone: \"UTC\",\n            },\n          },\n        ],\n      },\n    },\n  },\n  {\n    $merge: {\n      into: \"rainfall_15m\",\n      on: \"_id\",\n      whenMatched: \"replace\",\n      whenNotMatched: \"insert\",\n    },\n  },\n];\n\nmsg.mode = \"collection\";\nmsg.collection = \"rainfall_observations\";\nmsg.operation = \"aggregate\";\nmsg.payload = [pipeline, { allowDiskUse: true }];\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 440,
+    "wires": [
+      [
+        "3300000000000009"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000009",
+    "type": "mongodb4",
+    "z": "3300000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "rainfall_observations",
+    "operation": "aggregate",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Merge rainfall_15m",
+    "x": 680,
+    "y": 440,
+    "wires": [
+      [
+        "3300000000000010"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000010",
+    "type": "function",
+    "z": "3300000000000001",
+    "name": "Build weather join",
+    "func": "// Join detector 15-minute traffic with the matching weather bucket.\nconst hours = Math.max(1, Number(msg.lookbackHours || 6));\nconst since = new Date(Date.now() - hours * 60 * 60 * 1000);\n\nconst pipeline = [\n  { $match: { binStart: { $gte: since } } },\n  {\n    $lookup: {\n      from: \"rainfall_15m\",\n      localField: \"binStart\",\n      foreignField: \"obsTime\",\n      as: \"weather\",\n    },\n  },\n  {\n    $set: {\n      weatherMatched: { $gt: [{ $size: \"$weather\" }, 0] },\n    },\n  },\n  {\n    $set: {\n      networkAvgMm: {\n        $ifNull: [{ $arrayElemAt: [\"$weather.networkAvgMm\", 0] }, null],\n      },\n      networkMaxMm: {\n        $ifNull: [{ $arrayElemAt: [\"$weather.networkMaxMm\", 0] }, null],\n      },\n      rainingStations: {\n        $ifNull: [{ $arrayElemAt: [\"$weather.rainingStations\", 0] }, null],\n      },\n      missingStations: {\n        $ifNull: [{ $arrayElemAt: [\"$weather.missingStations\", 0] }, null],\n      },\n      rainCategory: {\n        $ifNull: [{ $arrayElemAt: [\"$weather.rainCategory\", 0] }, \"unmatched\"],\n      },\n    },\n  },\n  { $unset: \"weather\" },\n  {\n    $merge: {\n      into: \"traffic_weather_15m\",\n      on: \"_id\",\n      whenMatched: \"replace\",\n      whenNotMatched: \"insert\",\n    },\n  },\n];\n\nmsg.mode = \"collection\";\nmsg.collection = \"traffic_detector_15m\";\nmsg.operation = \"aggregate\";\nmsg.payload = [pipeline, { allowDiskUse: true }];\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 560,
+    "wires": [
+      [
+        "3300000000000011"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000011",
+    "type": "mongodb4",
+    "z": "3300000000000001",
+    "clientNode": "9000000000000001",
+    "mode": "collection",
+    "collection": "traffic_detector_15m",
+    "operation": "aggregate",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "name": "Merge traffic_weather_15m",
+    "x": 680,
+    "y": 560,
+    "wires": [
+      [
+        "3300000000000012"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000012",
+    "type": "debug",
+    "z": "3300000000000001",
+    "name": "Analytics aggregate result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload.length",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 940,
+    "y": 560,
+    "wires": []
+  },
+  {
+    "id": "3300000000000013",
+    "type": "catch",
+    "z": "3300000000000001",
+    "name": "Analytics errors",
+    "scope": null,
+    "uncaught": false,
+    "x": 430,
+    "y": 700,
+    "wires": [
+      [
+        "3300000000000014"
+      ]
+    ]
+  },
+  {
+    "id": "3300000000000014",
+    "type": "debug",
+    "z": "3300000000000001",
+    "name": "Analytics error",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "error.message",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 680,
+    "y": 700,
+    "wires": []
   },
   {
     "id": "9000000000000001",
