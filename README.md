@@ -47,7 +47,7 @@ The first startup can take several minutes while Docker downloads images and res
 
 On a fresh MongoDB data volume:
 
-1. `mongo-init/000-restore-seed.sh` restores `smartcity-seed.archive.gz`.
+1. `mongo-init/000-restore-seed.sh` combines the split seed parts and restores the snapshot.
 2. `mongo-init/001-create-indexes.js` ensures query indexes exist.
 3. MongoDB becomes healthy.
 
@@ -61,9 +61,15 @@ The seed snapshot contains:
 
 | Collection | Documents |
 |---|---:|
-| `traffic_observations` | 314,804 |
-| `rainfall_observations` | 936 |
+| `traffic_observations` | 6,906,766 |
+| `rainfall_observations` | 20,088 |
 | `traffic_detector_catalog` | 807 |
+| `traffic_detector_15m` | 427,918 |
+| `traffic_weather_15m` | 427,918 |
+| `traffic_road_hourly` | 42,938 |
+| `traffic_latest` | 780 |
+| `rainfall_15m` | 557 |
+| `ingestion_runs` | 1,679 |
 
 See [DATA_DICTIONARY.md](DATA_DICTIONARY.md) for field definitions and aggregation recommendations.
 
@@ -235,18 +241,18 @@ docker compose exec -T mongo mongorestore \
 
 ## Update the committed seed
 
-Replace `mongo-init/smartcity-seed.archive.gz`, regenerate its checksum, and record the new snapshot in `DATA_DICTIONARY.md`.
+Replace `mongo-init/seed-parts/smartcity-seed.part-*`, regenerate the combined checksum, and record the new snapshot in `DATA_DICTIONARY.md`.
 
-On Windows PowerShell:
+On Windows with Git Bash:
 
 ```powershell
-(Get-FileHash '.\mongo-init\smartcity-seed.archive.gz' -Algorithm SHA256).Hash
+& 'D:\Git\bin\bash.exe' -lc 'cat mongo-init/seed-parts/smartcity-seed.part-* | sha256sum'
 ```
 
 On Linux or macOS:
 
 ```bash
-sha256sum mongo-init/smartcity-seed.archive.gz
+cat mongo-init/seed-parts/smartcity-seed.part-* | sha256sum
 ```
 
 ## Update the Node-RED flow

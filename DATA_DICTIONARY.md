@@ -8,13 +8,20 @@ All timestamps are stored as BSON `Date` values in UTC. Dashboard labels must be
 
 | Property | Value |
 |---|---|
-| Snapshot time | 2026-11-10 17:18 HKT |
+| Snapshot time | 2026-11-16 09:26 HKT |
 | Database | `smartcity` |
-| Archive | `mongo-init/smartcity-seed.archive.gz` |
-| Archive SHA-256 | `7B6EDE12D0D38BF46C9066F56D545C04ABDDEADCF85131E97DFB17829A19B95D` |
-| Traffic observations | 314,804 |
-| Weather observations | 936 |
+| Archive | `mongo-init/seed-parts/smartcity-seed.part-00` through `part-03` |
+| Archive SHA-256 | `A6FC9F12294C93C551D8E60262FA4A312D45733B6343E477A34D2F337482FB5B` |
+| Traffic observations | 6,906,766 |
+| Weather observations | 20,088 |
 | Detector catalog records | 807 |
+| 15-minute detector aggregates | 427,918 |
+| Weather-traffic aggregates | 427,918 |
+| Hourly road aggregates | 42,938 |
+| Latest detector states | 780 |
+| Ingestion run records | 1,679 |
+| Traffic range | 2026-11-10 10:26 HKT to 2026-11-16 09:16 HKT |
+| Weather range | 2026-11-10 10:15 HKT to 2026-11-16 09:00 HKT |
 
 ## `traffic_observations`
 
