@@ -2,6 +2,18 @@
 
 This repository contains a reproducible Node-RED and MongoDB environment for continuous collection of Hong Kong traffic-speed and rainfall open data. A team member can clone the repository, run Docker Compose, and immediately start with both the saved data snapshot and the current Node-RED flow.
 
+## Traffic Dashboard
+
+After `docker compose up -d --build`, open:
+
+```text
+http://localhost:1880/traffic
+```
+
+The dashboard includes City Overview, Road Network Map, and Congestion & Time. It supports historical snapshot, latest available snapshot, and live modes, together with district, road, direction, and 1h/6h/24h/7d filters. Leaflet assets are bundled locally; only the optional OpenStreetMap background tiles require internet access.
+
+See the [D2 handoff guide](docs/D2_HANDOFF.md), [validation record](docs/D2_VALIDATION.md), [report draft](docs/D2_REPORT_EN.md), and [demo script](docs/D2_DEMO.md).
+
 ## Included
 
 - Node-RED flow with traffic, weather, catalog, retry, and MongoDB integrations
@@ -12,6 +24,7 @@ This repository contains a reproducible Node-RED and MongoDB environment for con
 - Data indexes for time-series queries
 - A complete [data dictionary](DATA_DICTIONARY.md)
 - The three-person Dashboard design and assignment plan in [TEAM_WORK_PLAN.md](TEAM_WORK_PLAN.md)
+- Read-only Traffic Dashboard with regression tests and saved evidence
 
 ## Start
 

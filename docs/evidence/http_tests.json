@@ -1,0 +1,43 @@
+{
+  "at": "2026-11-18T08:02:55.179Z",
+  "results": [
+    {
+      "test": "/traffic",
+      "result": "PASS"
+    },
+    {
+      "test": "/traffic/app.js",
+      "result": "PASS"
+    },
+    {
+      "test": "/traffic/style.css",
+      "result": "PASS"
+    },
+    {
+      "test": "/traffic/leaflet.js",
+      "result": "PASS"
+    },
+    {
+      "test": "/traffic/leaflet.css",
+      "result": "PASS"
+    },
+    {
+      "test": "Real catalog contains 807 unique detectors",
+      "result": "PASS"
+    },
+    {
+      "test": "Empty district is explicit null/no samples",
+      "result": "PASS"
+    },
+    {
+      "test": "District / road / direction filters are applied consistently",
+      "result": "PASS",
+      "n": 144
+    },
+    {
+      "test": "All original collector and cleaning nodes unchanged",
+      "result": "PASS",
+      "nodes": 49
+    }
+  ]
+}

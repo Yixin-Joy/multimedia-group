@@ -1,0 +1,23 @@
+{
+  "checkedAt": "2026-11-17T06:04:15.774Z",
+  "countMatch": true,
+  "lowSpeedMatch": true,
+  "roundedMeanMatch": true,
+  "api": {
+    "name": "All selected detector-buckets",
+    "n": 427918,
+    "speed": 72.73,
+    "volume": 26112540,
+    "slow": 2588,
+    "slowShare": 0.6,
+    "detectors": 780
+  },
+  "database": {
+    "_id": null,
+    "n": 427918,
+    "speed": 72.72525088918906,
+    "slow": 2588,
+    "first": "2026-11-10T02:15:00.000Z",
+    "last": "2026-11-16T01:00:00.000Z"
+  }
+}

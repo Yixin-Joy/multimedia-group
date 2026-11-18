@@ -1,0 +1,96 @@
+{
+  "counts": {
+    "traffic": 6923400,
+    "rainfall": 20124,
+    "ingestionRuns": 1686,
+    "traffic15": 428036,
+    "trafficLatest": 780,
+    "roadHourly": 42938,
+    "rainfall15": 557,
+    "weatherJoin": 427918,
+    "weatherMatched": 426382,
+    "lowSpeed": 2621
+  },
+  "latestSample": {
+    "_id": "AID07108",
+    "totalVolume": 59,
+    "laneIds": [
+      "Slow Lane",
+      "Middle Lane 2",
+      "Fast Lane",
+      "Middle Lane 1"
+    ],
+    "observationCount": 16,
+    "latestObservedAt": "2026-11-16T01:05:30.000Z",
+    "laneCount": 4,
+    "detectorId": "AID07108",
+    "binStart": "2026-11-16T01:00:00.000Z",
+    "direction": "North West",
+    "district": "Kwun Tong",
+    "roadEn": "Kwun Tong Road near Tsui Ping Road - Westbound ",
+    "roadBase": "Kwun Tong Road",
+    "latitude": 22.3108941,
+    "longitude": 114.2284196,
+    "avgSpeedKmh": 43.71,
+    "avgOccupancyPct": 4.56,
+    "lowSpeed": false,
+    "speedBand": "moderate",
+    "promotedAt": "2026-11-16T01:16:39.270Z"
+  },
+  "weatherCategories": [
+    {
+      "_id": "no-rain",
+      "count": 384162
+    },
+    {
+      "_id": "light",
+      "count": 16851
+    },
+    {
+      "_id": "heavy",
+      "count": 15380
+    },
+    {
+      "_id": "moderate",
+      "count": 9989
+    },
+    {
+      "_id": "unmatched",
+      "count": 1536
+    }
+  ],
+  "indexes": {
+    "traffic15": [
+      "_id_",
+      "time_district",
+      "detector_time"
+    ],
+    "trafficLatest": [
+      "_id_",
+      "district_speed_state"
+    ],
+    "weatherJoin": [
+      "_id_",
+      "time_district",
+      "rain_time"
+    ],
+    "trafficTTL": [
+      {
+        "name": "ttl_observedAt_8d",
+        "ttl": 691200
+      }
+    ],
+    "rainfallTTL": [
+      {
+        "name": "ttl_obsTime_30d",
+        "ttl": 2592000
+      }
+    ],
+    "ingestionRunsTTL": [
+      {
+        "name": "ttl_runAt_30d",
+        "ttl": 2592000
+      }
+    ]
+  }
+}

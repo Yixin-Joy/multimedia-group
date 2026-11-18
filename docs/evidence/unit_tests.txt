@@ -1,0 +1,17 @@
+✔ missing buckets and zero volume break low-speed runs (20.0458ms)
+✔ multiple detectors never merge into one duration (0.5555ms)
+✔ 20 km/h is not below the strict threshold; invalid speeds excluded (0.3642ms)
+✔ empty filter yields null not fabricated zero speed (0.197ms)
+✔ Hong Kong Saturday boundary classifies UTC Friday 16:00 as weekend (0.4133ms)
+✔ historical baseline excludes future low speed and requires sufficient span (1.7829ms)
+✔ sampled counts are summed while network speed weights detectors equally (0.4521ms)
+✔ end boundary excluded and filtered road does not leak into other statistics (0.2569ms)
+✔ generated flow has unique IDs and only read-only D2 database operations (2.6798ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 171.7168
