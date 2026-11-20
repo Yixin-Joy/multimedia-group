@@ -14,6 +14,8 @@ The dashboard includes City Overview, Road Network Map, and Congestion & Time. I
 
 See the [D2 handoff guide](docs/D2_HANDOFF.md), [validation record](docs/D2_VALIDATION.md), [report draft](docs/D2_REPORT_EN.md), and [demo script](docs/D2_DEMO.md).
 
+The data engineering and system report draft is in [docs/D1_REPORT_EN.md](docs/D1_REPORT_EN.md).
+
 ## Included
 
 - Node-RED flow with traffic, weather, catalog, retry, and MongoDB integrations
