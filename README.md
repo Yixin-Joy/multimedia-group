@@ -12,9 +12,9 @@ http://localhost:1880/traffic
 
 The dashboard includes City Overview, Road Network Map, and Congestion & Time. It supports historical snapshot, latest available snapshot, and live modes, together with district, road, direction, and 1h/6h/24h/7d filters. Leaflet assets are bundled locally; only the optional OpenStreetMap background tiles require internet access.
 
-See the [D2 handoff guide](docs/D2_HANDOFF.md), [validation record](docs/D2_VALIDATION.md), [report draft](docs/D2_REPORT_EN.md), and [demo script](docs/D2_DEMO.md).
+See the [D2 handoff guide](docs/D2_HANDOFF.md), [validation record](docs/D2_VALIDATION.md), and [demo script](docs/D2_DEMO.md).
 
-The data engineering and system report draft is in [docs/D1_REPORT_EN.md](docs/D1_REPORT_EN.md).
+Report writing is maintained locally and is not included in the repository.
 
 ## Included
 

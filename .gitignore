@@ -17,6 +17,11 @@ Thumbs.db
 Programming Assignment.pdf
 选题.docx
 
+# Private report drafts and Word temporary files.
+reports/
+*.docx
+~$*.docx
+
 # IDE and editor state.
 .idea/
 .vscode/

@@ -16,10 +16,11 @@
 - `node-red-data/flows.json`：包含原采集/清洗页签的完整流程。
 - `tools/build_traffic_dashboard.js`：把源码打入 Node-RED 流程，重复运行不新增重复节点。
 - `tests/traffic.test.js`：计算边界测试。
-- `docs/D2_REPORT_EN.md` / `D2_REPORT_ZH.md`：英文报告素材、中文讲解。
 - `docs/D2_DEMO.md`：演示脚本。
 - `docs/evidence`：真实统计 JSON、CSV 和独立数据库复核。
 - `docs/screenshots`：真实运行截图。
+
+报告正文和报告素材保存在本地，不纳入 GitHub 仓库。
 
 ## 对分工一：如何合并
 
@@ -38,7 +39,7 @@
 - 参数：mode=seed/snapshot/live；hours=1/6/24/168；district、road、direction为可选精确匹配。返回窗口起止、样本数、分组结果、连续低速段和相对降速。
 - `GET /traffic/api/catalog` 返回探测器目录及当前latest；历史页面的实际状态取analytics.latest，以防历史图混入当前数据。
 - 查询只读。SQL式原始表达式不会从URL注入；所有筛选按字符串比较。
-- 交通报告章节编号按标题合并：原分工表8.1/8.2前后不一致，避免机械复制编号。
+- 交通章节并入报告时，按标题合并；原分工表的 8.1/8.2 前后不一致，避免机械复制编号。
 
 ## 对应任务
 
@@ -50,7 +51,7 @@
 | D2-04 | 道路低速排行、连续低速段、高峰分析、相对降速 |
 | D2-05 | 工作日与周末小时曲线、分组样本数 |
 | D2-06 | 自动回归测试、数据库复核及浏览器验收 |
-| D2-07 | 中英文交通报告素材 |
+| D2-07 | 交通部分分析结果与图表说明（本地维护） |
 | D2-08 | 真实页面截图、结果CSV和图注 |
 | D2-09 | 三分钟演示脚本 |
 
@@ -60,4 +61,4 @@
 
 修改 dashboard 源码后运行 `node tools/build_traffic_dashboard.js`，再导入新D2流程。不要单独运行原来的 `tools/build_flows.js` 后忘记重建D2，它会重写完整流程。
 
-报告更新：先重新保存固定窗口的API JSON和同窗口数据库统计，再运行 `node tools/write_d2_report.js`；脚本会检查总数、低速数、均速是否一致。最后重新截图，确保图文同步。
+报告在仓库外本地维护。更新报告前，先重新保存固定窗口的 API JSON 和同窗口数据库统计，再核对总数、低速数和均速。最后重新截图，确保图文同步。

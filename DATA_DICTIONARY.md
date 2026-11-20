@@ -122,14 +122,18 @@ One document per detector with the latest usable observation and catalog fields.
 | `_id` | String | Detector ID |
 | `binStart` | Date | Start of the promoted 15-minute bucket |
 | `detectorId` | String | Detector ID |
+| `direction` | String | Direction used for the bucket |
 | `district` | String | District |
+| `roadEn` | String | Full English road and segment description from the catalog |
 | `roadBase` | String | Normalized road name |
-| `direction` | String | Normalized direction |
 | `latitude` | Number or null | WGS84 latitude |
 | `longitude` | Number or null | WGS84 longitude |
 | `avgSpeedKmh` | Number | Latest volume-weighted speed |
 | `totalVolume` | Number | Latest bucket volume |
 | `avgOccupancyPct` | Number | Latest bucket occupancy |
+| `laneCount` | Number | Distinct lane count in the bucket |
+| `laneIds` | Array of String | Distinct lane IDs in the bucket |
+| `observationCount` | Number | Number of valid raw lane rows in the bucket |
 | `lowSpeed` | Boolean | Latest bucket low-speed state |
 | `speedBand` | String | Latest speed band |
 | `latestObservedAt` | Date | Latest underlying source observation |
@@ -144,9 +148,12 @@ One document per detector and 15-minute time bucket.
 | `_id` | String | `traffic15:<binStartISO>:<detectorId>` |
 | `binStart` | Date | Start of the 15-minute bucket |
 | `detectorId` | String | Detector ID |
+| `direction` | String | Direction used for the bucket |
 | `district` | String | District |
+| `roadEn` | String | Full English road and segment description from the catalog |
 | `roadBase` | String | Normalized road name |
-| `direction` | String | Normalized direction |
+| `latitude` | Number or null | WGS84 latitude |
+| `longitude` | Number or null | WGS84 longitude |
 | `avgSpeedKmh` | Number | Volume-weighted lane speed |
 | `totalVolume` | Number | Sum of valid lane volume |
 | `avgOccupancyPct` | Number | Mean valid lane occupancy |
@@ -165,24 +172,28 @@ One document per 15-minute weather bucket.
 |---|---|---|
 | `_id` | String | `rainfall15:<obsTimeISO>` |
 | `obsTime` | Date | Weather observation time |
-| `stationCount` | Number | Number of expected stations |
+| `stationCount` | Number | Number of station records |
+| `validStations` | Number | Stations with a non-null rainfall value |
 | `missingStations` | Number | Stations with `qualityFlag=missing` |
 | `rainingStations` | Number | Stations with positive rainfall |
-| `networkAvgMm` | Number | Mean rainfall across valid stations |
-| `networkMaxMm` | Number | Maximum valid station rainfall |
+| `networkAvgMm` | Number or null | Mean rainfall across valid stations |
+| `networkMaxMm` | Number or null | Maximum valid station rainfall |
 | `rainCategory` | String | `unknown`, `no-rain`, `light`, `moderate`, or `heavy` |
 
 ### `traffic_weather_15m`
 
 One document per detector and 15-minute bucket after joining `traffic_detector_15m` with `rainfall_15m`.
 
-Required fields:
+This collection contains every field from `traffic_detector_15m`, plus the fields below.
 
-- All `traffic_detector_15m` fields
-- `networkAvgMm`
-- `rainingStations`
-- `rainCategory`
-- `weatherMatched` boolean
+| Field | Type | Description |
+|---|---|---|
+| `weatherMatched` | Boolean | `true` when a `rainfall_15m` record exists for `binStart` |
+| `networkAvgMm` | Number or null | Mean valid station rainfall for the matching bucket |
+| `networkMaxMm` | Number or null | Maximum valid station rainfall for the matching bucket |
+| `rainingStations` | Number or null | Number of stations with positive rainfall |
+| `missingStations` | Number or null | Number of stations with `qualityFlag=missing` |
+| `rainCategory` | String | Rain category from `rainfall_15m`, or `unmatched` |
 
 Unmatched traffic buckets must not be assigned zero rainfall.
 
@@ -215,10 +226,13 @@ One document per successful traffic or weather collection attempt.
 | `sourceDate` | String or null | Traffic source date |
 | `firstPeriod` | String or null | First 30-second source period |
 | `lastPeriod` | String or null | Last 30-second source period |
+| `periods` | Number or null | Number of source periods in a traffic response |
+| `detectorIntervals` | Number or null | Detector-period combinations in a traffic response |
 | `obsTime` | Date or null | Weather source observation time |
 | `attemptedRows` | Number | Rows submitted to MongoDB |
 | `insertedRows` | Number | New rows inserted |
 | `duplicateRows` | Number | Existing rows matched by deterministic keys |
+| `modifiedRows` | Number or null | Traffic rows modified by an upsert |
 | `invalidRows` | Number | Traffic rows rejected during normalization |
 | `missingRows` | Number | Weather values marked `M` |
 | `traceRows` | Number | Weather values marked `T` |
@@ -231,6 +245,7 @@ One document per successful traffic or weather collection attempt.
 | `traffic_observations` | 8 days on `observedAt` |
 | `rainfall_observations` | 30 days on `obsTime` |
 | `ingestion_runs` | 30 days on `runAt` |
+| `traffic_detector_catalog` | No TTL; current catalog is refreshed by upsert |
 | Derived aggregate collections | No TTL |
 
 ## Dashboard metric definitions
